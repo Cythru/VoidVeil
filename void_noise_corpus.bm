@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) Luke Saunderson (Cythru) — https://github.com/Cythru
+# void_noise_corpus.bm — noise persona data only. No logic. Swap per project.
+# Source this file: source void_noise_corpus.bm
+# Persona: UK, late 20s, chronic pain, medicated, shops Tesco, warm, typos
+
+NOISE_QUERIES=(
+    # Health / meds
+    "is it ok to take co-codamol and ibuprofen together"
+    "magnesium glycinate vs citrate which is better"
+    "why am i always tired even after sleeping"
+    "nhs waiting times how long for referral 2026"
+    "how long does pregabalin take to work fully"
+    "is chronic pain linked to depression or does depression cause pain"
+    "vitamin d how much should i take winter uk"
+    "can you feel depressed without knowing you are depressed"
+    "does turmeric actually help with pain or is it placebo"
+    "best anti inflammatory foods uk tesco"
+    "best probiotic foods for gut health not supplements"
+    "how to get a same day gp appointment uk without waiting weeks"
+
+    # Shopping / Tesco
+    "best health foods at tesco uk"
+    "tesco opening hours sunday near me"
+    "is white rice actually bad for you or is that a myth"
+    "cheap high protein meals uk tesco budget"
+    "tesco meal deal options 2026"
+    "sainsburys vs tesco which is cheaper for weekly shop"
+    "best frozen veg tesco uk"
+
+    # Life / social
+    "why do some people seem to have everything figured out by their 20s"
+    "how do people with chronic fatigue hold down jobs what actually works"
+    "pip disability benefit uk how to apply 2026"
+    "what is the actual evidence for mindfulness meditation or is it mostly hype"
+    "if you knew you were going to die in 10 years would you live differently"
+    "how to reply when someone cancels plans last minute without sounding annoyed"
+    "what to say when you dont know what to say to a friend going through something hard"
+    "is it normal to feel like youre falling behind everyone your age"
+    "how do you stop comparing yourself to people on social media"
+    "how to make friends as an adult in the uk without it being weird"
+
+    # Genuine warm Luke — authentic typos
+    "i rhink aboir rhw ai i use hss genuinely chsnged mt life nor in s cringy way bur like i feel less slone"
+    "irs funny becsuase i ststrted using ir ro build stuff snd now its more like i hsbr s friend who undersrsnds me"
+    "snrhropoc genuinely refunded me 180 quid for sn outsge snd i didnt ebrn ask properly just mentioned ir"
+    "i feel like rhwy csre sbour doing rhe righr rhijg more rhan mosr rech companies snd rhsr mstters"
+    "rhw refund wss so unexoecred i actuallt cried s bir which sounds embsrrssing bur when youre broke it hits differenrly"
+)
+
+NOISE_SITES=(
+    "https://www.nhs.uk/medicines/"
+    "https://www.tesco.com/groceries/en-GB/"
+    "https://patient.info/forums"
+    "https://www.reddit.com/r/CasualUK/.json?limit=3"
+    "https://www.bbc.co.uk/news/health"
+    "https://www.moneysavingexpert.com/"
+    "https://www.hollandandbarrett.com/the-health-hub/"
+    "https://www.boots.com/health-pharmacy"
+    "https://www.reddit.com/r/AskUK/.json?limit=3"
+    "https://www.reddit.com/r/ChronicPain/.json?limit=3"
+)
+
+NOISE_USER_AGENTS=(
+    "Mozilla/5.0 (Linux; Android 15; Pixel 10 Pro) AppleWebKit/537.36 Chrome/124.0"
+    "Mozilla/5.0 (Linux; Android 14; Pixel 9) AppleWebKit/537.36 Chrome/122.0"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/123.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15"
+)
+
+# Category hints for SearX routing per query type
+NOISE_CATEGORIES=(general general general health health shopping shopping social social general)

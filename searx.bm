@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) Luke Saunderson (Cythru) — https://github.com/Cythru
+# searx.bm — shared SearX query function, zero direct search engines
+# Source this file: source searx.bm
+# Then call: searx_query "your question" [category]
+# Categories: general | social | shopping | health | news | code
+
+# ── Instance pool (latency-selected at query time) ───────────────────────────
+SEARX_INSTANCES=(
+    "https://searx.be"
+    "https://search.bus-hit.me"
+    "https://searx.tiekoetter.com"
+    "https://searx.oloke.xyz"
+    "https://searxng.site"
+)
+
+# Category → engine hint (appended as &engines=)
+declare -A SEARX_ENGINES=(
+    [general]="general"
+    [social]="reddit"
+    [shopping]="google"
+    [health]="google,bing"
+    [news]="google news"
+    [code]="google,stackoverflow"
+)
+
+# Pick lowest-latency instance from pool
+searx_best_instance() {
+    local best="" best_ms=9999
+    for inst in "${SEARX_INSTANCES[@]}"; do
+        local ms
+        ms=$(curl -o /dev/null -s -w "%{time_total}" --max-time 3 "$inst" 2>/dev/null \
+             | awk '{printf "%d", $1*1000}')
+        if [[ -n "$ms" && "$ms" -lt "$best_ms" ]]; then
+            best_ms=$ms
+            best=$inst
+        fi
+    done
+    echo "${best:-${SEARX_INSTANCES[0]}}"
+}
+
+# Main query function
+# Usage: searx_query "what to buy at tesco" [category] [ua]
+searx_query() {
+    local query="$1"
+    local category="${2:-general}"
+    local ua="${3:-Mozilla/5.0 (Linux; Android 15; Pixel 10 Pro) AppleWebKit/537.36 Chrome/124.0}"
+    local engines="${SEARX_ENGINES[$category]:-general}"
+
+    local instance
+    instance=$(searx_best_instance)
+
+    local encoded
+    encoded=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$query" 2>/dev/null \
+              || echo "${query// /+}")
+
+    curl -s -A "$ua" --max-time 10 \
+        "${instance}/search?q=${encoded}&category=${category}&engines=${engines}&format=json" \
+        2>/dev/null
+}
+
+# Fire-and-forget variant — no output, just background noise
+searx_silent() {
+    local query="$1"
+    local category="${2:-general}"
+    local ua="$3"
+    searx_query "$query" "$category" "$ua" -o /dev/null &
+}

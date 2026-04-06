@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) Luke Saunderson (Cythru) — https://github.com/Cythru
+# void_noise.bm — noise orchestrator. Sources searx.bm + void_noise_corpus.bm
+# Usage: void_noise [start|stop|status|restart]
+
+set -euo pipefail
+
+MODULES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG="$HOME/.voidveil/void_noise.log"
+PID_FILE="$HOME/.voidveil/void_noise.pid"
+DECOY_PORT="${VOID_NOISE_PORT:-18080}"
+
+mkdir -p "$HOME/.voidveil"
+
+# Source dependencies
+source "$MODULES_DIR/searx.bm"
+source "$MODULES_DIR/void_noise_corpus.bm"
+
+# ── Decoy HTTP server ────────────────────────────────────────────────────────
+_decoy_server() {
+    local responses=(
+        '{"status":"ok","version":"1.0"}'
+        '{"user":"guest","plan":"free","active":true}'
+        '<html><body><h1>Welcome</h1></body></html>'
+        '{"pong":true}'
+        'User-agent: *\nDisallow: /admin\n'
+    )
+    echo "[void_noise] decoy server on :$DECOY_PORT" >> "$LOG"
+    while true; do
+        local body="${responses[$(( RANDOM % ${#responses[@]} ))]}"
+        printf "HTTP/1.1 200 OK\r\nContent-Length: ${#body}\r\nServer: nginx/1.24\r\nConnection: close\r\n\r\n%s" \
+            "$body" | nc -l -p "$DECOY_PORT" -q 1 2>/dev/null || true
+    done
+}
+
+# ── Noise loop ───────────────────────────────────────────────────────────────
+_noise_loop() {
+    echo "[void_noise] noise loop started" >> "$LOG"
+    while true; do
+        # Human-paced: 45–180s between actions
+        sleep $(( 45 + RANDOM % 135 ))
+
+        local ua="${NOISE_USER_AGENTS[$(( RANDOM % ${#NOISE_USER_AGENTS[@]} ))]}"
+
+        if (( RANDOM % 3 == 0 )); then
+            # Hit a site directly
+            local site="${NOISE_SITES[$(( RANDOM % ${#NOISE_SITES[@]} ))]}"
+            curl -s -A "$ua" --max-time 8 "$site" -o /dev/null 2>/dev/null || true
+            echo "[noise] site → ${site:0:50}" >> "$LOG"
+        else
+            # Route through SearX — never DDG, never direct
+            local idx=$(( RANDOM % ${#NOISE_QUERIES[@]} ))
+            local q="${NOISE_QUERIES[$idx]}"
+            local cat="${NOISE_CATEGORIES[$(( idx % ${#NOISE_CATEGORIES[@]} ))]}"
+            searx_query "$q" "$cat" "$ua" -o /dev/null 2>/dev/null || true
+            echo "[noise] search[$cat] → ${q:0:60}" >> "$LOG"
+        fi
+    done
+}
+
+# ── Commands ─────────────────────────────────────────────────────────────────
+_start() {
+    if [[ -f "$PID_FILE" ]]; then
+        local pids
+        pids=$(cat "$PID_FILE")
+        for p in $pids; do kill "$p" 2>/dev/null || true; done
+    fi
+    echo "[void_noise] starting $(date)" >> "$LOG"
+    _decoy_server &
+    local decoy_pid=$!
+    _noise_loop &
+    local noise_pid=$!
+    echo "$decoy_pid $noise_pid" > "$PID_FILE"
+    echo "[void_noise] running — decoy:$DECOY_PORT pids:$decoy_pid,$noise_pid" | tee -a "$LOG"
+}
+
+_stop() {
+    if [[ -f "$PID_FILE" ]]; then
+        for p in $(cat "$PID_FILE"); do kill "$p" 2>/dev/null || true; done
+        rm -f "$PID_FILE"
+        echo "[void_noise] stopped"
+    else
+        echo "[void_noise] not running"
+    fi
+}
+
+_status() {
+    if [[ -f "$PID_FILE" ]]; then
+        echo "[void_noise] running — pids: $(cat "$PID_FILE")"
+        tail -5 "$LOG" 2>/dev/null || true
+    else
+        echo "[void_noise] not running"
+    fi
+}
+
+case "${1:-start}" in
+    start)   _start ;;
+    stop)    _stop ;;
+    status)  _status ;;
+    restart) _stop; sleep 1; _start ;;
+    *) echo "usage: void_noise [start|stop|status|restart]" ;;
+esac

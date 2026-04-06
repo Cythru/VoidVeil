@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) Luke Saunderson (Cythru) — https://github.com/Cythru
+# void_noise_api.bm — JSON REST API for void_noise. Sources corpus. nc-based.
+# Upgrade path: Rust axum daemon when load requires it.
+#
+# Endpoints:
+#   GET  /status          → daemon state, pids, uptime
+#   GET  /queries         → full noise corpus as JSON array
+#   GET  /log?n=20        → last N log lines
+#   POST /trigger         → fire one noise query immediately
+#   POST /start           → start noise daemon
+#   POST /stop            → stop noise daemon
+#
+# Usage: void_noise_api [start|stop] [--port 19080]
+
+set -euo pipefail
+
+MODULES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+API_PORT="${VOID_NOISE_API_PORT:-19080}"
+API_PID_FILE="$HOME/.voidveil/void_noise_api.pid"
+LOG="$HOME/.voidveil/void_noise.log"
+NOISE_PID_FILE="$HOME/.voidveil/void_noise.pid"
+
+mkdir -p "$HOME/.voidveil"
+
+source "$MODULES_DIR/void_noise_corpus.bm"
+source "$MODULES_DIR/searx.bm"
+
+# ── JSON helpers ─────────────────────────────────────────────────────────────
+_json_str()   { printf '"%s"' "${1//\"/\\\"}"; }
+_json_bool()  { [[ "$1" == "true" ]] && echo "true" || echo "false"; }
+
+_json_array() {
+    local arr=("$@")
+    local out="["
+    for i in "${!arr[@]}"; do
+        out+=$(_json_str "${arr[$i]}")
+        (( i < ${#arr[@]} - 1 )) && out+=","
+    done
+    out+="]"
+    echo "$out"
+}
+
+# ── Response builder ─────────────────────────────────────────────────────────
+_respond() {
+    local status="$1" body="$2" content_type="${3:-application/json}"
+    local len=${#body}
+    printf "HTTP/1.1 %s\r\nContent-Type: %s\r\nContent-Length: %d\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n%s" \
+        "$status" "$content_type" "$len" "$body"
+}
+
+# ── Route handlers ───────────────────────────────────────────────────────────
+_handle_status() {
+    local running="false" pids="" uptime="unknown"
+    if [[ -f "$NOISE_PID_FILE" ]]; then
+        pids=$(cat "$NOISE_PID_FILE")
+        # verify actually alive
+        local alive=false
+        for p in $pids; do kill -0 "$p" 2>/dev/null && alive=true && break; done
+        $alive && running="true"
+    fi
+    local last_lines
+    last_lines=$(tail -5 "$LOG" 2>/dev/null | python3 -c "
+import sys,json
+lines=[l.rstrip() for l in sys.stdin]
+print(json.dumps(lines))
+" 2>/dev/null || echo "[]")
+
+    _respond "200 OK" "{\"running\":$running,\"pids\":\"$pids\",\"log\":$last_lines,\"port\":$API_PORT}"
+}
+
+_handle_queries() {
+    local json
+    json=$(_json_array "${NOISE_QUERIES[@]}")
+    _respond "200 OK" "{\"count\":${#NOISE_QUERIES[@]},\"queries\":$json}"
+}
+
+_handle_log() {
+    local n="${1:-20}"
+    local lines
+    lines=$(tail -"$n" "$LOG" 2>/dev/null | python3 -c "
+import sys,json; print(json.dumps([l.rstrip() for l in sys.stdin]))" 2>/dev/null || echo "[]")
+    _respond "200 OK" "{\"lines\":$lines}"
+}
+
+_handle_trigger() {
+    local idx=$(( RANDOM % ${#NOISE_QUERIES[@]} ))
+    local q="${NOISE_QUERIES[$idx]}"
+    local ua="${NOISE_USER_AGENTS[$(( RANDOM % ${#NOISE_USER_AGENTS[@]} ))]}"
+    local cat="${NOISE_CATEGORIES[$(( idx % ${#NOISE_CATEGORIES[@]} ))]}"
+    searx_query "$q" "$cat" "$ua" -o /dev/null 2>/dev/null &
+    echo "[api/trigger] ${q:0:60}" >> "$LOG"
+    _respond "200 OK" "{\"triggered\":true,\"query\":$(_json_str "$q"),\"category\":\"$cat\"}"
+}
+
+_handle_start() {
+    bash "$MODULES_DIR/void_noise.bm" start >> "$LOG" 2>&1 &
+    _respond "200 OK" '{"started":true}'
+}
+
+_handle_stop() {
+    bash "$MODULES_DIR/void_noise.bm" stop >> "$LOG" 2>&1
+    _respond "200 OK" '{"stopped":true}'
+}
+
+_handle_not_found() {
+    _respond "404 Not Found" '{"error":"not found"}'
+}
+
+# ── Request parser + router ──────────────────────────────────────────────────
+_route() {
+    local raw="$1"
+    local method path
+    method=$(echo "$raw" | head -1 | awk '{print $1}')
+    path=$(echo "$raw" | head -1 | awk '{print $2}')
+
+    # strip query string, extract n= param
+    local qs="${path#*\?}" bare_path="${path%%\?*}"
+    local n=20
+    [[ "$qs" =~ n=([0-9]+) ]] && n="${BASH_REMATCH[1]}"
+
+    case "$method $bare_path" in
+        "GET /status")    _handle_status ;;
+        "GET /queries")   _handle_queries ;;
+        "GET /log")       _handle_log "$n" ;;
+        "POST /trigger")  _handle_trigger ;;
+        "POST /start")    _handle_start ;;
+        "POST /stop")     _handle_stop ;;
+        *)                _handle_not_found ;;
+    esac
+}
+
+# ── Server loop ──────────────────────────────────────────────────────────────
+_api_server() {
+    echo "[void_noise_api] listening on :$API_PORT" | tee -a "$LOG"
+    while true; do
+        local request
+        request=$(nc -l -p "$API_PORT" -q 1 2>/dev/null) || continue
+        _route "$request" | nc -l -p "$API_PORT" -q 1 2>/dev/null || true
+    done
+}
+
+# ── Commands ─────────────────────────────────────────────────────────────────
+_start_api() {
+    [[ -f "$API_PID_FILE" ]] && kill "$(cat "$API_PID_FILE")" 2>/dev/null || true
+    _api_server &
+    echo $! > "$API_PID_FILE"
+    echo "[void_noise_api] started pid:$(cat "$API_PID_FILE") port:$API_PORT"
+}
+
+_stop_api() {
+    [[ -f "$API_PID_FILE" ]] && kill "$(cat "$API_PID_FILE")" 2>/dev/null && rm -f "$API_PID_FILE"
+    echo "[void_noise_api] stopped"
+}
+
+# parse --port flag
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --port) API_PORT="$2"; shift 2 ;;
+        start)  CMD=start; shift ;;
+        stop)   CMD=stop; shift ;;
+        *)      shift ;;
+    esac
+done
+
+case "${CMD:-start}" in
+    start) _start_api ;;
+    stop)  _stop_api ;;
+esac

@@ -1,0 +1,9 @@
+*.log
+*.pid
+.claudie/
+target/
+
+
+# Added by cargo
+
+/target
